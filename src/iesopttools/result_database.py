@@ -17,7 +17,9 @@ class RDB:
         if (name in self.entries) and (not self.replace_entries):
             raise ValueError(f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
         
-        self.entries[name] = RDBEntry(model, name, replace=self.replace_entries)
+        entry = RDBEntry(model, name, replace=self.replace_entries)
+        self.entries[name] = entry
+        return entry
 
 
 class RDBEntryRelation:
@@ -210,6 +212,26 @@ class RDBEntryRelation:
 
         return RDBEntryRelation(self._parent, rel)
 
+    def evaluate(self, f: str | list[str], *, by: str | list[str] | None = None):
+        f = f if isinstance(f, list) else [f]
+        aggr = []
+        group = []
+
+        if by:
+            aggr.extend(by if isinstance(by, list) else [by])
+            group.extend(by if isinstance(by, list) else [by])
+        
+        for fi in f:
+            if "(" in fi:
+                if not fi.endswith(")"):
+                    raise ValueError(f"Invalid aggregation function '{fi}'; when supplying arguments, make sure they are give like `quantile(0.9)`.")
+                fi, fiargs = fi[:-1].split("(")
+                aggr.append(f"{fi}(value, {fiargs}) AS '{fi}({fiargs})'")
+            else:
+                aggr.append(f"{fi}(value) AS {fi}")
+
+        return RDBEntryRelation(self._parent, self._relation.aggregate(", ".join(aggr), ", ".join(group)))
+
 class RDBEntry:
     def __init__(self, model, name: str | None = None, replace: bool = False):     
         self.name = name
@@ -270,14 +292,39 @@ class RDBEntry:
 
 rdb = RDB(replace_entries=True)
 
-rdb.add_entry(model)
+entry = rdb.add_entry(model)
+
+# entry.rel.duckdb().aggregate("quantile(value, 0.8) AS 'quantile(0.8)'")
 
 # duckdb.view("my_model_my_scenario_tags")
 # duckdb.view("my_model_my_scenario_carriers")
 
-# rdb.entries["my_model_my_scenario"].rel["tags"]
 
-# rdb.entries["my_model_my_scenario"].explore("components")
+# entry.explore("components")
+# entry.explore("fields")
+# entry.select(component="create_gas")
+# entry.select(component="create_gas").explore("fields")
+# entry.select(components=["plant_gas", "plant_solar"], field="in_gas")
+# entry.select(components=["chp.heat", "chp.power"], field="in_gas")
 
 
-rdb.entries["my_model_my_scenario"].explore("field")
+# # Annual sum of energy consumed by component.
+# entry.select(components=["chp.heat", "chp.power"], field="in_gas").evaluate("sum", by="component")
+
+# # Per-snapshot sum of energy (of all components).
+# entry.select(field="in_gas").evaluate("sum", by="snapshot")
+
+# # Per-snapshot and per-component energy mix.
+# entry.select(field="in_gas").evaluate("sum", by=["snapshot", "component"])
+
+# # Total (annual) energy in/out mix of all components. (TODO: this "misses" profiles for example)
+# entry.select("field SIMILAR TO '(in|out)_.*'").evaluate("sum", by="field")
+
+# # Total, per-snapshot, energy in/out mix of all components.
+# entry.select("field SIMILAR TO '(in|out)_.*'").evaluate("sum", by="snapshot, field")
+
+
+# histogram, max, mean, median, min, mode, quantile, stddev, sum, variance
+
+entry.select(field="in_gas").evaluate("quantile_cont(0.5)")
+entry.select(field="in_gas").evaluate("median")
