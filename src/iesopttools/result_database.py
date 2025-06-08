@@ -4,6 +4,9 @@ import iesopt
 
 
 class RDB:
+    """
+    A class to manage a result database (RDB) of entries, each representing a model result.
+    """
     def __init__(self, replace_entries: bool = False):
         self._entries = dict()
         self._replace_entries = replace_entries
@@ -20,6 +23,10 @@ class RDB:
         return sorted(self._entries.keys())
 
     def add_entry(self, model, name: str | None = None):
+        """
+        Add a new entry to the RDB based on the provided (solved) model.
+        If `name` is not provided, it will be derived from the model's internal configuration.
+        """
         if name is None:
             name = model.internal.input.config["general"]["name"]
             name = f"{name['model']}_{name['scenario']}"
@@ -34,6 +41,10 @@ class RDB:
 
 
 class RDBEntryRelation:
+    """
+    A class to represent a relation in the result database (RDB).
+    It provides methods to select, explore, and evaluate data from the relation.
+    """
     def __init__(self, parent, relation):
         self._parent = parent
         self._relation = relation
@@ -53,6 +64,12 @@ class RDBEntryRelation:
         return self._relation
     
     def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+        """
+        Select data from the relation based on the provided arguments. This method allows for filtering by `snapshot`,
+        `component`, `fieldtype`, `field`, or `mode`. The `mode` can be one of `primal`, `dual`, `both`, or
+        `shadowprice`. The `shadowprice` mode filters for dual results only, then for either `var.value` (Decision) or
+        `con.nodalbalance` (Node).
+        """
         rel = self._relation
 
         # Setup list of filters to apply.
@@ -161,6 +178,13 @@ class RDBEntryRelation:
         return RDBEntryRelation(self._parent, rel)
 
     def explore(self, *args, order: bool = True, **kwargs):
+        """
+        Explore the relation by projecting and selecting distinct values of the specified columns. This method allows
+        for exploring the dimensions of the relation, such as `snapshot`, `component`, `fieldtype`, `field`, and `mode`.
+        The `order` parameter determines whether the results should be ordered by the projected columns.
+        The method can be called with positional arguments (e.g., `explore("fields")`) or keyword arguments (e.g.,
+        `explore(fields=True)`).        
+        """
         rel = self._relation
 
         # Collect all projections to apply.
@@ -228,6 +252,21 @@ class RDBEntryRelation:
         return RDBEntryRelation(self._parent, rel)
 
     def evaluate(self, f: str | list[str], *, by: str | list[str] | None = None):
+        """
+        Evaluate the relation by applying an aggregation function `f` to the `value` column.
+        The function can be a single string (e.g., "sum", "mean", "quantile(0.9)") or a list of strings.
+        The `by` parameter can be a single string or a list of strings to group the results by.
+        If `by` is not provided, the aggregation will be applied to the entire relation.
+        The result will be a new relation with the aggregated values.
+        If `f` contains parentheses, it is assumed to be a function with arguments (e.g., "quantile(0.9)").
+        If `f` is a list, each function will be applied separately, and the results will be combined.
+        If `by` is a list, the results will be grouped by each of the specified columns.
+        If `by` is a single string, the results will be grouped by that column.
+        If `by` is not provided, the results will be aggregated without grouping.
+        If `f` is a string without parentheses, it is assumed to be a simple aggregation function (e.g., "sum", "mean").
+        If `f` is a list, each function will be applied separately, and the results will be combined.
+        The result will be a new relation with the aggregated values.
+        """
         f = f if isinstance(f, list) else [f]
         aggr = []
         group = []
@@ -248,6 +287,12 @@ class RDBEntryRelation:
         return RDBEntryRelation(self._parent, self._relation.aggregate(", ".join(aggr), ", ".join(group)))
 
 class RDBEntryQuery:
+    """
+    A class to query components based on their `tag` or `carrier` information.
+    It allows for filtering and union/intersection operations on the queried components.
+    The relation can be used to fetch the components as a list or to perform further operations.
+    The relation can be either `tag` or `carrier`, and the filter can be a string to filter the components.
+    """
     def __init__(self, entry, relation: str, filter: str = "*"):
         self._entry = entry
         
@@ -277,6 +322,11 @@ class RDBEntryQuery:
         return self._relation
     
     def union(self, relation: str, filter: str = "*"):
+        """
+        Union this query with another query based on the specified relation and filter.
+        The result will be a new query that combines the components from both queries.
+        The union will be distinct, meaning that duplicate components will be removed.
+        """
         other = RDBEntryQuery(self._entry, relation, filter)
         new = RDBEntryQuery(self._entry, "__none__")
         new._relation = self._relation.union(other.duckdb())
@@ -284,12 +334,20 @@ class RDBEntryQuery:
         return new
 
     def intersect(self, relation: str, filter: str = "*"):
+        """
+        Intersect this query with another query based on the specified relation and filter.
+        The result will be a new query that contains only the components that are present in both queries.
+        """
         other = RDBEntryQuery(self._entry, relation, filter)
         new = RDBEntryQuery(self._entry, "__none__")
         new._relation = self._relation.intersect(other.duckdb())
         return new
 
 class RDBEntry:
+    """
+    A class representing a single entry in the result database (RDB).
+    It contains the model results and provides methods to explore and query the data.
+    """
     def __init__(self, model, name: str | None = None, replace: bool = False):     
         self.name = name
 
@@ -300,6 +358,9 @@ class RDBEntry:
         self.rel = RDBEntryRelation(self, duckdb.from_df(results))
 
     def explore(self, *args, order: bool = True, **kwargs):
+        """
+        Explore the entry by projecting and selecting distinct values of the specified columns.
+        """
         if (len(args) == 1) and args[0].startswith("tag"):
             return self.tags.project("tag").distinct()
 
@@ -309,12 +370,24 @@ class RDBEntry:
         return self.rel.explore(*args, order=order, **kwargs)
 
     def query(self, relation: str, filter: str = "*"):
+        """
+        Query components, either based on filtering `tag` or `carrier` information.
+        """
         return RDBEntryQuery(self, relation, filter)
 
     def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+        """
+        Select data from the entry based on the provided arguments.
+        This method allows for filtering by `snapshot`, `component`, `fieldtype`, `field`, or `mode`.
+        """
         return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
 
     def _parse_tags(self, model, replace: bool):
+        """
+        Parse tags from the model and create a DuckDB view for them. Each tag is associated with its components.
+        The view will be named `<entry_name>_tags`. If `replace` is True, it will replace any existing view with the
+        same name.
+        """
         tags = []
         for (tag, components) in model.internal.model.tags.items():
             for component in components:
@@ -325,6 +398,11 @@ class RDBEntry:
         return tags.create_view(self.name + "_tags", replace=replace)
     
     def _parse_carriers(self, model, replace: bool):
+        """
+        Parse carriers from the model and create a DuckDB view for them. Each carrier is associated with its components.
+        The view will be named `<entry_name>_carriers`. If `replace` is True, it will replace any existing view with the
+        same name.
+        """
         carriers = []
         for component in model.get_components():
             cname = component.name
