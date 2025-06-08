@@ -292,11 +292,12 @@ class RDBEntryQuery:
 class RDBEntry:
     def __init__(self, model, name: str | None = None, replace: bool = False):     
         self.name = name
-        self.model = model
-        
-        self.tags = self._parse_tags(replace)
-        self.carriers = self._parse_carriers(replace)
-        self.rel = RDBEntryRelation(self, duckdb.from_df(model.results.to_pandas()))
+
+        self.tags = self._parse_tags(model, replace)
+        self.carriers = self._parse_carriers(model, replace)
+
+        results = model.results.to_pandas()
+        self.rel = RDBEntryRelation(self, duckdb.from_df(results))
 
     def explore(self, *args, order: bool = True, **kwargs):
         if (len(args) == 1) and args[0].startswith("tag"):
@@ -313,9 +314,9 @@ class RDBEntry:
     def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
         return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
 
-    def _parse_tags(self, replace: bool):
+    def _parse_tags(self, model, replace: bool):
         tags = []
-        for (tag, components) in self.model.internal.model.tags.items():
+        for (tag, components) in model.internal.model.tags.items():
             for component in components:
                 tags.append((component, tag))
 
@@ -323,9 +324,9 @@ class RDBEntry:
         tags = duckdb.from_df(tags)
         return tags.create_view(self.name + "_tags", replace=replace)
     
-    def _parse_carriers(self, replace: bool):
+    def _parse_carriers(self, model, replace: bool):
         carriers = []
-        for component in self.model.get_components():
+        for component in model.get_components():
             cname = component.name
             ctype = iesopt.julia.typeof(component)
             ctype = str(ctype).split(".")[-1]
@@ -363,12 +364,16 @@ entry = rdb["my_model_my_scenario"]
 
 entry.select(components=["chp.heat", "chp.power"], field="in_gas").evaluate("sum", by="component")
 
-entry.carriers.filter("direction = 'out' AND carrier = 'electricity'").project("component")
-entry.tags.filter("tag = 'Profile'").project("component")
-
 entry.explore("components")
 entry.explore("tags")
 entry.explore("carriers")
+
+entry.select(component="create_gas")
+entry.select(component="create_gas").explore("field")  # most of these support either `field` or `fields` (so both singular and plural forms)
+entry.select(component="create_gas").explore(["fieldtype", "field"])
+
+entry.select(mode="shadowprice").explore("component")
+entry.select(mode="shadowprice").evaluate("mean", by="component")
 
 q0 = entry.query("tag", "tag = 'Profile'")
 q1 = q0.intersect("carrier", "direction = 'out' AND carrier = 'electricity'")
@@ -405,7 +410,6 @@ entry.select(components=q1.fetch).evaluate("sum", by="component")
 
 # # Total, per-snapshot, energy in/out mix of all components.
 # entry.select("field SIMILAR TO '(in|out)_.*'").evaluate("sum", by="snapshot, field")
-
 
 # min, max, sum, mean, median, quantile, stddev, variance, mode, histogram
 
