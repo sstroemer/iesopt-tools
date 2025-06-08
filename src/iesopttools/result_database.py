@@ -5,8 +5,19 @@ import iesopt
 
 class RDB:
     def __init__(self, replace_entries: bool = False):
-        self.entries = dict()
-        self.replace_entries = replace_entries
+        self._entries = dict()
+        self._replace_entries = replace_entries
+
+    def __getitem__(self, name: str):
+        """Get an entry by name."""
+        if name not in self._entries:
+            raise KeyError(f"RDBEntry '{name}' does not exist.")
+        return self._entries[name]
+    
+    @property
+    def entries(self):
+        """Get a list of all entry names."""
+        return sorted(self._entries.keys())
 
     def add_entry(self, model, name: str | None = None):
         if name is None:
@@ -14,11 +25,11 @@ class RDB:
             name = f"{name['model']}_{name['scenario']}"
             name = "".join([c if c.isalnum() else "_" for c in name])
 
-        if (name in self.entries) and (not self.replace_entries):
+        if (name in self._entries) and (not self._replace_entries):
             raise ValueError(f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
         
-        entry = RDBEntry(model, name, replace=self.replace_entries)
-        self.entries[name] = entry
+        entry = RDBEntry(model, name, replace=self._replace_entries)
+        self._entries[name] = entry
         return entry
 
 
@@ -85,12 +96,16 @@ class RDBEntryRelation:
             
             if sel_sg in kwargs:
                 val = kwargs.pop(sel_sg)
+                if not isinstance(val, str):
+                    raise ValueError(f"The `{sel_sg}` argument must be a string; if you are trying to filter based on multiple options, pass `{sel_pl} = ...` instead.")
                 filters.append(f"{sel_sg} = '{val}'")
             
             if sel_pl in kwargs:
                 vals = kwargs.pop(sel_pl)
+                if isinstance(vals, RDBEntryQuery):
+                    vals = vals.fetch()
                 if not isinstance(vals, (list, tuple)):
-                    raise ValueError(f"The '{sel_pl}' argument must be a list or tuple of strings.")
+                    raise ValueError(f"The `{sel_pl}` argument must be a list or tuple of strings.")
                 vals = "', '".join(vals)
                 filters.append(f"{sel_sg} IN ('{vals}')")
         
@@ -232,6 +247,48 @@ class RDBEntryRelation:
 
         return RDBEntryRelation(self._parent, self._relation.aggregate(", ".join(aggr), ", ".join(group)))
 
+class RDBEntryQuery:
+    def __init__(self, entry, relation: str, filter: str = "*"):
+        self._entry = entry
+        
+        if relation.startswith("tag"):
+            self._relation = entry.tags
+        elif relation.startswith("carrier"):
+            self._relation = entry.carriers
+        elif relation == "__none__":
+            return
+        else:
+            raise ValueError(f"Invalid relation: {relation}; must be on of [tag, carrier], or the plural form of one of those.")
+        
+        self._relation = self._relation.filter(filter).project("component").distinct()
+
+    def __repr__(self):
+        return self._relation.__repr__()
+    
+    def __str__(self):
+        return self._relation.__str__()
+
+    def fetch(self):
+        """Fetch data as `list`."""
+        return [el[0] for el in self._relation.fetchall()]
+
+    def duckdb(self):
+        """Return the underlying `duckdb.DuckDBPyRelation`."""
+        return self._relation
+    
+    def union(self, relation: str, filter: str = "*"):
+        other = RDBEntryQuery(self._entry, relation, filter)
+        new = RDBEntryQuery(self._entry, "__none__")
+        new._relation = self._relation.union(other.duckdb())
+        new._relation = new._relation.distinct()  # `union` can create duplicates, so we remove them.
+        return new
+
+    def intersect(self, relation: str, filter: str = "*"):
+        other = RDBEntryQuery(self._entry, relation, filter)
+        new = RDBEntryQuery(self._entry, "__none__")
+        new._relation = self._relation.intersect(other.duckdb())
+        return new
+
 class RDBEntry:
     def __init__(self, model, name: str | None = None, replace: bool = False):     
         self.name = name
@@ -241,11 +298,20 @@ class RDBEntry:
         self.carriers = self._parse_carriers(replace)
         self.rel = RDBEntryRelation(self, duckdb.from_df(model.results.to_pandas()))
 
+    def explore(self, *args, order: bool = True, **kwargs):
+        if (len(args) == 1) and args[0].startswith("tag"):
+            return self.tags.project("tag").distinct()
+
+        if (len(args) == 1) and args[0].startswith("carrier"):
+            return self.carriers.project("carrier").distinct()
+
+        return self.rel.explore(*args, order=order, **kwargs)
+
+    def query(self, relation: str, filter: str = "*"):
+        return RDBEntryQuery(self, relation, filter)
+
     def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
         return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
-
-    def explore(self, *args, order: bool = True, **kwargs):
-        return self.rel.explore(*args, order=order, **kwargs)
 
     def _parse_tags(self, replace: bool):
         tags = []
@@ -291,8 +357,25 @@ class RDBEntry:
 
 
 rdb = RDB(replace_entries=True)
+rdb.add_entry(model)
+rdb.entries
+entry = rdb["my_model_my_scenario"]
 
-entry = rdb.add_entry(model)
+entry.select(components=["chp.heat", "chp.power"], field="in_gas").evaluate("sum", by="component")
+
+entry.carriers.filter("direction = 'out' AND carrier = 'electricity'").project("component")
+entry.tags.filter("tag = 'Profile'").project("component")
+
+entry.explore("components")
+entry.explore("tags")
+entry.explore("carriers")
+
+q0 = entry.query("tag", "tag = 'Profile'")
+q1 = q0.intersect("carrier", "direction = 'out' AND carrier = 'electricity'")
+q2 = q0.union("carrier", "direction = 'out' AND carrier = 'electricity'")
+
+# either call `fetch()` to get a list of components, or use it directly in `select()`:
+entry.select(components=q1.fetch).evaluate("sum", by="component")
 
 # entry.rel.duckdb().aggregate("quantile(value, 0.8) AS 'quantile(0.8)'")
 
@@ -324,7 +407,7 @@ entry = rdb.add_entry(model)
 # entry.select("field SIMILAR TO '(in|out)_.*'").evaluate("sum", by="snapshot, field")
 
 
-# histogram, max, mean, median, min, mode, quantile, stddev, sum, variance
+# min, max, sum, mean, median, quantile, stddev, variance, mode, histogram
 
-entry.select(field="in_gas").evaluate("quantile_cont(0.5)")
-entry.select(field="in_gas").evaluate("median")
+# entry.select(field="in_gas").evaluate("quantile_cont(0.5)")
+# entry.select(field="in_gas").evaluate("histogram", by="component") # .duckdb().fetchone()
