@@ -3,7 +3,7 @@ import duckdb
 import iesopt
 
 
-class ResultDatabase:
+class RDB:
     def __init__(self, replace_entries: bool = False):
         self.entries = dict()
         self.replace_entries = replace_entries
@@ -15,23 +15,32 @@ class ResultDatabase:
             name = "".join([c if c.isalnum() else "_" for c in name])
 
         if (name in self.entries) and (not self.replace_entries):
-            raise ValueError(f"ResultDatabaseEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
+            raise ValueError(f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
         
-        self.entries[name] = ResultDatabaseEntry(model, name, replace=self.replace_entries)
-        
+        self.entries[name] = RDBEntry(model, name, replace=self.replace_entries)
 
-class ResultDatabaseEntry:
-    def __init__(self, model, name: str | None = None, replace: bool = False):     
-        self.name = name
-        self.model = model
-        self.rel = dict()
 
-        self.rel["tags"] = self._parse_tags(replace)
-        self.rel["carriers"] = self._parse_carriers(replace)
-        self.rel["results"] = duckdb.from_df(model.results.to_pandas())
+class RDBEntryRelation:
+    def __init__(self, parent, relation):
+        self._parent = parent
+        self._relation = relation
     
-    def select(self, *args, limit: int | None = None, offset: int = 0, return_type: str = "duckdb", debug = False, **kwargs):
-        rel = self.rel["results"]
+    def __repr__(self):
+        return self._relation.__repr__()
+    
+    def __str__(self):
+        return self._relation.__str__()
+
+    def df(self):
+        """Fetch data as `pandas.DataFrame`."""
+        return self._relation.to_df()
+
+    def duckdb(self):
+        """Return the underlying `duckdb.DuckDBPyRelation`."""
+        return self._relation
+    
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+        rel = self._relation
 
         # Setup list of filters to apply.
         filters: list[str] = kwargs.pop("filters", [])
@@ -39,10 +48,6 @@ class ResultDatabaseEntry:
         # Check limit and offset.
         if (offset != 0) and (limit is None):
             raise ValueError("You cannot specify an offset without a limit; please specify both or neither.")
-        
-        # Check return type.
-        if return_type not in ["duckdb", "df"]:
-            raise ValueError(f"Invalid return type: {return_type}; must be one of [duckdb, df].")
         
         # Create filters based on mode selection.
         mode = kwargs.pop("mode", "primal")
@@ -135,19 +140,11 @@ class ResultDatabaseEntry:
         if limit is not None:
             # Apply limit and offset.
             rel = rel.order(columns).limit(limit, offset)
-
-        # Return the relation in the requested format.
-        if return_type == "df":
-            return rel.df()
         
-        return rel
+        return RDBEntryRelation(self._parent, rel)
 
-    def explore(self, *args, order: bool = True, return_type: str = "duckdb", **kwargs):
-        rel = self.rel["results"]
-        
-        # Check return type.
-        if return_type not in ["duckdb", "df"]:
-            raise ValueError(f"Invalid return type: {return_type}; must be one of [duckdb, df].")
+    def explore(self, *args, order: bool = True, **kwargs):
+        rel = self._relation
 
         # Collect all projections to apply.
         projections = []
@@ -211,11 +208,22 @@ class ResultDatabaseEntry:
         if order:
             rel = rel.order(projections)
 
-        # Return the relation in the requested format.
-        if return_type == "df":
-            return rel.df()
+        return RDBEntryRelation(self._parent, rel)
 
-        return rel
+class RDBEntry:
+    def __init__(self, model, name: str | None = None, replace: bool = False):     
+        self.name = name
+        self.model = model
+        
+        self.tags = self._parse_tags(replace)
+        self.carriers = self._parse_carriers(replace)
+        self.rel = RDBEntryRelation(self, duckdb.from_df(model.results.to_pandas()))
+
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+        return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
+
+    def explore(self, *args, order: bool = True, **kwargs):
+        return self.rel.explore(*args, order=order, **kwargs)
 
     def _parse_tags(self, replace: bool):
         tags = []
@@ -260,7 +268,7 @@ class ResultDatabaseEntry:
         return carriers.create_view(self.name + "_carriers", replace=replace)
 
 
-rdb = ResultDatabase(replace_entries=True)
+rdb = RDB(replace_entries=True)
 
 rdb.add_entry(model)
 
@@ -268,3 +276,8 @@ rdb.add_entry(model)
 # duckdb.view("my_model_my_scenario_carriers")
 
 # rdb.entries["my_model_my_scenario"].rel["tags"]
+
+# rdb.entries["my_model_my_scenario"].explore("components")
+
+
+rdb.entries["my_model_my_scenario"].explore("field")
