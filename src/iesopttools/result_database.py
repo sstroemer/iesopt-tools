@@ -11,18 +11,18 @@ class RDB:
         self._entries = dict()
         self._replace_entries = replace_entries
 
-    def __getitem__(self, name: str):
+    def __getitem__(self, name: str) -> "RDBEntry":
         """Get an entry by name."""
         if name not in self._entries:
             raise KeyError(f"RDBEntry '{name}' does not exist.")
         return self._entries[name]
     
     @property
-    def entries(self):
+    def entries(self) -> list[str]:
         """Get a list of all entry names."""
         return sorted(self._entries.keys())
 
-    def add_entry(self, model, name: str | None = None):
+    def add_entry(self, model, name: str | None = None) -> "RDBEntry":
         """
         Add a new entry to the RDB based on the provided (solved) model.
         If `name` is not provided, it will be derived from the model's internal configuration.
@@ -55,15 +55,15 @@ class RDBEntryRelation:
     def __str__(self):
         return self._relation.__str__()
 
-    def df(self):
+    def df(self) -> pd.DataFrame:
         """Fetch data as `pandas.DataFrame`."""
         return self._relation.to_df()
 
-    def duckdb(self):
+    def duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
     
-    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs) -> "RDBEntryRelation":
         """
         Select data from the relation based on the provided arguments. This method allows for filtering by `snapshot`,
         `component`, `fieldtype`, `field`, or `mode`. The `mode` can be one of `primal`, `dual`, `both`, or
@@ -80,19 +80,24 @@ class RDBEntryRelation:
             raise ValueError("You cannot specify an offset without a limit; please specify both or neither.")
         
         # Create filters based on mode selection.
-        mode = kwargs.pop("mode", "primal")
-        if mode == "primal":
-            filters.append("mode = 'primal'")
-        elif mode == "dual":
-            filters.append("mode = 'dual'")
-        elif mode == "both":
-            pass
-        elif mode == "shadowprice":
-            # This filters for dual results only, then for either "var.value" (Decision) or "con.nodalbalance" (Node).
-            filters.append("mode = 'dual'")
-            filters.append("(fieldtype = 'var' AND field = 'value') OR (fieldtype = 'con' AND field = 'nodalbalance')")
+        mode = None
+        if "mode" not in rel.columns:
+            if "mode" in kwargs:
+                raise ValueError("The 'mode' column is not present in the relation; you cannot filter by mode.")
         else:
-            raise ValueError(f"Invalid mode: {mode}; must be one of [primal, dual, both, shadowprice].")
+            mode = kwargs.pop("mode", "primal")
+            if mode == "primal":
+                filters.append("mode = 'primal'")
+            elif mode == "dual":
+                filters.append("mode = 'dual'")
+            elif mode == "both":
+                pass
+            elif mode == "shadowprice":
+                # This filters for dual results only, then for either "var.value" (Decision) or "con.nodalbalance" (Node).
+                filters.append("mode = 'dual'")
+                filters.append("(fieldtype = 'var' AND field = 'value') OR (fieldtype = 'con' AND field = 'nodalbalance')")
+            else:
+                raise ValueError(f"Invalid mode: {mode}; must be one of [primal, dual, both, shadowprice].")
 
         # Add positional arguments as QoL way to include filters.
         if len(args) > 0:
@@ -177,7 +182,7 @@ class RDBEntryRelation:
         
         return RDBEntryRelation(self._parent, rel)
 
-    def explore(self, *args, order: bool = True, **kwargs):
+    def explore(self, *args, order: bool = True, **kwargs) -> "RDBEntryRelation":
         """
         Explore the relation by projecting and selecting distinct values of the specified columns. This method allows
         for exploring the dimensions of the relation, such as `snapshot`, `component`, `fieldtype`, `field`, and `mode`.
@@ -238,20 +243,26 @@ class RDBEntryRelation:
             raise ValueError(f"Unexpected keyword arguments: {', '.join(kwargs.keys())}")
         
         # Enforce a certain order of projections.
-        projections = [p for p in ["snapshot", "component", "fieldtype", "field", "mode"] if p in projections]
-        projections = ", ".join(projections)
+        if len(projections) > 0:
+            projections = [p for p in ["snapshot", "component", "fieldtype", "field", "mode"] if p in projections]
+            projections = ", ".join(projections)
+        else:
+            # Project onto existing columns.
+            projections = [c for c in ["snapshot", "component", "fieldtype", "field", "mode"] if c in rel.columns]
+            projections = ", ".join(projections)
 
         # Project and select distinct values.
-        rel = rel.project(projections)
+        if projections != "":
+            rel = rel.project(projections)
         rel = rel.distinct()
 
         # If requested, order the relation subsequently by each columns (ascending).
-        if order:
+        if order and (projections != ""):
             rel = rel.order(projections)
 
         return RDBEntryRelation(self._parent, rel)
 
-    def evaluate(self, f: str | list[str], *, by: str | list[str] | None = None):
+    def evaluate(self, f: str | list[str], *, by: str | list[str] | None = None) -> "RDBEntryRelation":
         """
         Evaluate the relation by applying an aggregation function `f` to the `value` column.
         The function can be a single string (e.g., "sum", "mean", "quantile(0.9)") or a list of strings.
@@ -313,15 +324,15 @@ class RDBEntryQuery:
     def __str__(self):
         return self._relation.__str__()
 
-    def fetch(self):
+    def fetch(self) -> list[str]:
         """Fetch data as `list`."""
         return [el[0] for el in self._relation.fetchall()]
 
-    def duckdb(self):
+    def duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
     
-    def union(self, relation: str, filter: str = "*"):
+    def union(self, relation: str, filter: str = "*") -> "RDBEntryQuery":
         """
         Union this query with another query based on the specified relation and filter.
         The result will be a new query that combines the components from both queries.
@@ -333,7 +344,7 @@ class RDBEntryQuery:
         new._relation = new._relation.distinct()  # `union` can create duplicates, so we remove them.
         return new
 
-    def intersect(self, relation: str, filter: str = "*"):
+    def intersect(self, relation: str, filter: str = "*") -> "RDBEntryQuery":
         """
         Intersect this query with another query based on the specified relation and filter.
         The result will be a new query that contains only the components that are present in both queries.
@@ -357,7 +368,7 @@ class RDBEntry:
         results = model.results.to_pandas()
         self.rel = RDBEntryRelation(self, duckdb.from_df(results))
 
-    def explore(self, *args, order: bool = True, **kwargs):
+    def explore(self, *args, order: bool = True, **kwargs) -> RDBEntryRelation:
         """
         Explore the entry by projecting and selecting distinct values of the specified columns.
         """
@@ -369,20 +380,20 @@ class RDBEntry:
 
         return self.rel.explore(*args, order=order, **kwargs)
 
-    def query(self, relation: str, filter: str = "*"):
+    def query(self, relation: str, filter: str = "*") -> RDBEntryQuery:
         """
         Query components, either based on filtering `tag` or `carrier` information.
         """
         return RDBEntryQuery(self, relation, filter)
 
-    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs):
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs) -> RDBEntryRelation:
         """
         Select data from the entry based on the provided arguments.
         This method allows for filtering by `snapshot`, `component`, `fieldtype`, `field`, or `mode`.
         """
         return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
 
-    def _parse_tags(self, model, replace: bool):
+    def _parse_tags(self, model, replace: bool) -> duckdb.DuckDBPyRelation:
         """
         Parse tags from the model and create a DuckDB view for them. Each tag is associated with its components.
         The view will be named `<entry_name>_tags`. If `replace` is True, it will replace any existing view with the
@@ -397,7 +408,7 @@ class RDBEntry:
         tags = duckdb.from_df(tags)
         return tags.create_view(self.name + "_tags", replace=replace)
     
-    def _parse_carriers(self, model, replace: bool):
+    def _parse_carriers(self, model, replace: bool) -> duckdb.DuckDBPyRelation:
         """
         Parse carriers from the model and create a DuckDB view for them. Each carrier is associated with its components.
         The view will be named `<entry_name>_carriers`. If `replace` is True, it will replace any existing view with the
@@ -435,30 +446,30 @@ class RDBEntry:
         return carriers.create_view(self.name + "_carriers", replace=replace)
 
 
-rdb = RDB(replace_entries=True)
-rdb.add_entry(model)
-rdb.entries
-entry = rdb["my_model_my_scenario"]
+# rdb = RDB(replace_entries=True)
+# rdb.add_entry(model)
+# rdb.entries
+# entry = rdb["my_model_my_scenario"]
 
-entry.select(components=["chp.heat", "chp.power"], field="in_gas").evaluate("sum", by="component")
+# entry.select(components=["chp.heat", "chp.power"], field="in_gas").evaluate("sum", by="component")
 
-entry.explore("components")
-entry.explore("tags")
-entry.explore("carriers")
+# entry.explore("components")
+# entry.explore("tags")
+# entry.explore("carriers")
 
-entry.select(component="create_gas")
-entry.select(component="create_gas").explore("field")  # most of these support either `field` or `fields` (so both singular and plural forms)
-entry.select(component="create_gas").explore(["fieldtype", "field"])
+# entry.select(component="create_gas")
+# entry.select(component="create_gas").explore("field")  # most of these support either `field` or `fields` (so both singular and plural forms)
+# entry.select(component="create_gas").explore(["fieldtype", "field"])
 
-entry.select(mode="shadowprice").explore("component")
-entry.select(mode="shadowprice").evaluate("mean", by="component")
+# entry.select(mode="shadowprice").explore("component")
+# entry.select(mode="shadowprice").evaluate("mean", by="component")
 
-q0 = entry.query("tag", "tag = 'Profile'")
-q1 = q0.intersect("carrier", "direction = 'out' AND carrier = 'electricity'")
-q2 = q0.union("carrier", "direction = 'out' AND carrier = 'electricity'")
+# q0 = entry.query("tag", "tag = 'Profile'")
+# q1 = q0.intersect("carrier", "direction = 'out' AND carrier = 'electricity'")
+# q2 = q0.union("carrier", "direction = 'out' AND carrier = 'electricity'")
 
 # either call `fetch()` to get a list of components, or use it directly in `select()`:
-entry.select(components=q1.fetch).evaluate("sum", by="component")
+# entry.select(components=q1.fetch).evaluate("sum", by="component")
 
 # entry.rel.duckdb().aggregate("quantile(value, 0.8) AS 'quantile(0.8)'")
 
