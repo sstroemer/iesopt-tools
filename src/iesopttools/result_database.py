@@ -364,6 +364,10 @@ class RDBEntry:
 
         self.tags = self._parse_tags(model, replace)
         self.carriers = self._parse_carriers(model, replace)
+        
+        # Manually keep snapshots (in correct order).
+        self.snapshots = model.internal.model.snapshots
+        self.snapshots = [self.snapshots[t].name for t in range(1, len(self.snapshots) + 1)]
 
         results = model.results.to_pandas()
         self.rel = RDBEntryRelation(self, duckdb.from_df(results))
