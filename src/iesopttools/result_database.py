@@ -62,6 +62,11 @@ class RDBEntryRelation:
     def duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
+
+    @property
+    def entry(self) -> "RDBEntry":
+        """Get the parent entry of this relation."""
+        return self._parent
     
     def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs) -> "RDBEntryRelation":
         """
@@ -359,7 +364,7 @@ class RDBEntry:
     A class representing a single entry in the result database (RDB).
     It contains the model results and provides methods to explore and query the data.
     """
-    def __init__(self, model, name: str | None = None, replace: bool = False):     
+    def __init__(self, model, name: str, replace: bool = False):     
         self.name = name
 
         self.tags = self._parse_tags(model, replace)
