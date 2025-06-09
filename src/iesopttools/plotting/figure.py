@@ -13,6 +13,7 @@ class Trace:
 
         self._name = name if name else "unknown"  # TODO
         self._type = trace_type
+        self._rdbentry = data.entry
     
     def get(self, x = None, *, backend: str):
         y = self._data["value"].values if x is None else self._data.loc[x, "value"].values
@@ -42,8 +43,7 @@ class Trace:
 
 
 class Figure:
-    def __init__(self, *, x, backend: str = "plotly", style: str | None = None):
-        self._x = x
+    def __init__(self, *, backend: str = "plotly", style: str | None = None):
         self._backend = backend
         self._style = style
 
@@ -71,7 +71,14 @@ class Figure:
     def render(self):
         if self._backend == "plotly":
             import plotly.graph_objects as go
-            self._fig = go.Figure(data=[trace.get(self._x, backend=self._backend) for trace in self._traces])
+
+            # Check if this is a single-entry figure or a entry-comparison figure.
+            entries = [trace._rdbentry for trace in self._traces]
+            x = [entry.name for entry in entries]
+            if len(set(x)) == 1:
+                x = entries[0].snapshots
+
+            self._fig = go.Figure(data=[trace.get(x, backend=self._backend) for trace in self._traces])
 
             if self._style:
                 self._fig.update_layout(template=self._style)
