@@ -72,13 +72,33 @@ class RDBEntryRelation:
     def __str__(self):
         return self._relation.__str__()
 
-    def df(self) -> pd.DataFrame:
+    def to_df(self) -> pd.DataFrame:
         """Fetch data as `pandas.DataFrame`."""
         return self._relation.to_df()
 
-    def duckdb(self) -> duckdb.DuckDBPyRelation:
+    def to_duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
+    
+    def to_table(self, name: str, replace: bool = False) -> None:
+        """
+        Create a DuckDB table for the relation with the specified name. The table will be created in the schema of the
+        parent entry. If `replace` is True, it will replace any existing table with the same name, otherwise it will
+        raise an error if a table with the same name already exists.
+
+        This can be used to create a table for the relation, which can then be queried directly in DuckDB - especially
+        when using the local DuckDB UI, this can be useful to explore the data.
+
+        :param name: The name of the table to create.
+        :type name: str
+
+        :param replace: Whether to replace an existing table with the same name.
+        :type replace: bool
+        """
+        name = f'"{self._parent.name}"."usertable_{name}"'
+        if replace:
+            self._con.sql(f'DROP TABLE IF EXISTS {self.name} CASCADE;')
+        self._relation.to_table(name)       
 
     @property
     def entry(self) -> "RDBEntry":
@@ -330,9 +350,9 @@ class RDBEntryQuery:
         self._entry = entry
         
         if relation.startswith("tag"):
-            self._relation = entry.tags.duckdb()
+            self._relation = entry.tags.to_duckdb()
         elif relation.startswith("carrier"):
-            self._relation = entry.carriers.duckdb()
+            self._relation = entry.carriers.to_duckdb()
         elif relation == "__none__":
             return
         else:
@@ -362,7 +382,7 @@ class RDBEntryQuery:
         """
         other = RDBEntryQuery(self._entry, relation, filter)
         new = RDBEntryQuery(self._entry, "__none__")
-        new._relation = self._relation.union(other.duckdb())
+        new._relation = self._relation.union(other.to_duckdb())
         new._relation = new._relation.distinct()  # `union` can create duplicates, so we remove them.
         return new
 
@@ -373,7 +393,7 @@ class RDBEntryQuery:
         """
         other = RDBEntryQuery(self._entry, relation, filter)
         new = RDBEntryQuery(self._entry, "__none__")
-        new._relation = self._relation.intersect(other.duckdb())
+        new._relation = self._relation.intersect(other.to_duckdb())
         return new
 
 class RDBEntry:
@@ -389,7 +409,7 @@ class RDBEntry:
         # Create a DuckDB schema for the entry.
         if replace:
             self._con.sql(f'DROP SCHEMA IF EXISTS "{self.name}" CASCADE;')
-        self._con.sql(f'CREATE SCHEMA IF NOT EXISTS "{self.name}";')
+        self._con.sql(f'CREATE SCHEMA "{self.name}";')
 
         # Create all tables inside the schema.
         self.tags = RDBEntryRelation(self, self._parse_tags(model))
@@ -406,10 +426,10 @@ class RDBEntry:
         Explore the entry by projecting and selecting distinct values of the specified columns.
         """
         if (len(args) == 1) and args[0].startswith("tag"):
-            return self.tags.duckdb().project("tag").distinct()
+            return self.tags.to_duckdb().project("tag").distinct()
 
         if (len(args) == 1) and args[0].startswith("carrier"):
-            return self.carriers.duckdb().project("carrier").distinct()
+            return self.carriers.to_duckdb().project("carrier").distinct()
 
         return self.results.explore(*args, order=order, **kwargs)
 
@@ -521,7 +541,7 @@ class RDBEntry:
 # either call `fetch()` to get a list of components, or use it directly in `select()`:
 # entry.select(components=q1.fetch).evaluate("sum", by="component")
 
-# entry.rel.duckdb().aggregate("quantile(value, 0.8) AS 'quantile(0.8)'")
+# entry.rel.to_duckdb().aggregate("quantile(value, 0.8) AS 'quantile(0.8)'")
 
 # duckdb.view("my_model_my_scenario_tags")
 # duckdb.view("my_model_my_scenario_carriers")
@@ -553,4 +573,4 @@ class RDBEntry:
 # min, max, sum, mean, median, quantile, stddev, variance, mode, histogram
 
 # entry.select(field="in_gas").evaluate("quantile_cont(0.5)")
-# entry.select(field="in_gas").evaluate("histogram", by="component") # .duckdb().fetchone()
+# entry.select(field="in_gas").evaluate("histogram", by="component") # .to_duckdb().fetchone()
