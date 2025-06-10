@@ -7,9 +7,10 @@ class RDB:
     """
     A class to manage a result database (RDB) of entries, each representing a model result.
     """
-    def __init__(self, replace_entries: bool = False):
+    def __init__(self, name: str | None = None, replace_entries: bool = False):
         self._entries = dict()
         self._replace_entries = replace_entries
+        self._con = duckdb.connect(f":memory:{name}") if name else duckdb.connect(":memory:")
 
     def __getitem__(self, name: str) -> "RDBEntry":
         """Get an entry by name."""
@@ -21,6 +22,11 @@ class RDB:
     def entries(self) -> list[str]:
         """Get a list of all entry names."""
         return sorted(self._entries.keys())
+    
+    @property
+    def con(self) -> duckdb.DuckDBPyConnection:
+        """Get the underlying DuckDB connection."""
+        return self._con
 
     def add_entry(self, model, name: str | None = None) -> "RDBEntry":
         """
@@ -29,15 +35,26 @@ class RDB:
         """
         if name is None:
             name = model.internal.input.config["general"]["name"]
-            name = f"{name['model']}_{name['scenario']}"
-            name = "".join([c if c.isalnum() else "_" for c in name])
+            name = f"{name['model']} ({name['scenario']})"
 
         if (name in self._entries) and (not self._replace_entries):
             raise ValueError(f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
         
-        entry = RDBEntry(model, name, replace=self._replace_entries)
+        entry = RDBEntry(self, model, name, replace=self._replace_entries)
         self._entries[name] = entry
         return entry
+    
+    def ui(self, start: bool = True, port: int | None = None) -> None:
+        """
+        Start the DuckDB UI for the RDB connection. If `port` is not specified, it will use the default port.
+        If `start` is False, it will stop the UI server if it is running.
+        """
+        if start:
+            if port is not None:
+                self._con.sql(f"SET ui_local_port = {port};")
+            self._con.sql("CALL start_ui();")
+        else:
+            self._con.sql("CALL stop_ui_server();")
 
 
 class RDBEntryRelation:
@@ -313,9 +330,9 @@ class RDBEntryQuery:
         self._entry = entry
         
         if relation.startswith("tag"):
-            self._relation = entry.tags
+            self._relation = entry.tags.duckdb()
         elif relation.startswith("carrier"):
-            self._relation = entry.carriers
+            self._relation = entry.carriers.duckdb()
         elif relation == "__none__":
             return
         else:
@@ -364,30 +381,37 @@ class RDBEntry:
     A class representing a single entry in the result database (RDB).
     It contains the model results and provides methods to explore and query the data.
     """
-    def __init__(self, model, name: str, replace: bool = False):     
+    def __init__(self, rdb, model, name: str, replace: bool = False):     
+        self._rdb = rdb
+        self._con = self._rdb.con
         self.name = name
+        
+        # Create a DuckDB schema for the entry.
+        if replace:
+            self._con.sql(f'DROP SCHEMA IF EXISTS "{self.name}" CASCADE;')
+        self._con.sql(f'CREATE SCHEMA IF NOT EXISTS "{self.name}";')
 
-        self.tags = self._parse_tags(model, replace)
-        self.carriers = self._parse_carriers(model, replace)
+        # Create all tables inside the schema.
+        self.tags = RDBEntryRelation(self, self._parse_tags(model))
+        self.carriers = RDBEntryRelation(self, self._parse_carriers(model))
+        self.results = RDBEntryRelation(self, self._parse_results(model))
+        self._parse_model(model)
         
         # Manually keep snapshots (in correct order).
         self.snapshots = model.internal.model.snapshots
         self.snapshots = [self.snapshots[t].name for t in range(1, len(self.snapshots) + 1)]
-
-        results = model.results.to_pandas()
-        self.rel = RDBEntryRelation(self, duckdb.from_df(results))
 
     def explore(self, *args, order: bool = True, **kwargs) -> RDBEntryRelation:
         """
         Explore the entry by projecting and selecting distinct values of the specified columns.
         """
         if (len(args) == 1) and args[0].startswith("tag"):
-            return self.tags.project("tag").distinct()
+            return self.tags.duckdb().project("tag").distinct()
 
         if (len(args) == 1) and args[0].startswith("carrier"):
-            return self.carriers.project("carrier").distinct()
+            return self.carriers.duckdb().project("carrier").distinct()
 
-        return self.rel.explore(*args, order=order, **kwargs)
+        return self.results.explore(*args, order=order, **kwargs)
 
     def query(self, relation: str, filter: str = "*") -> RDBEntryQuery:
         """
@@ -400,9 +424,24 @@ class RDBEntry:
         Select data from the entry based on the provided arguments.
         This method allows for filtering by `snapshot`, `component`, `fieldtype`, `field`, or `mode`.
         """
-        return self.rel.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
+        return self.results.select(*args, limit=limit, offset=offset, debug=debug, **kwargs)
 
-    def _parse_tags(self, model, replace: bool) -> duckdb.DuckDBPyRelation:
+    def _parse_model(self, model) -> duckdb.DuckDBPyRelation:
+        for f in model.internal.input.files:
+            data = self._con.from_df(iesopt.julia.PythonCall.pytable(model.internal.input.files[f]))
+            data.to_table(f'"{self.name}"."file_{f}"')
+
+    def _parse_results(self, model) -> duckdb.DuckDBPyRelation:
+        """
+        Parse the results from the model and create a DuckDB view for them. The view will be named `<entry_name>`.
+        If `replace` is True, it will replace any existing view with the same name.
+        """
+        results = model.results.to_pandas()
+        results = self._con.from_df(results)
+        results.to_table(f'"{self.name}"."results"')
+        return self._con.table(f'"{self.name}"."results"')
+
+    def _parse_tags(self, model) -> duckdb.DuckDBPyRelation:
         """
         Parse tags from the model and create a DuckDB view for them. Each tag is associated with its components.
         The view will be named `<entry_name>_tags`. If `replace` is True, it will replace any existing view with the
@@ -414,10 +453,11 @@ class RDBEntry:
                 tags.append((component, tag))
 
         tags = pd.DataFrame.from_records(tags, columns=["component", "tag"])
-        tags = duckdb.from_df(tags)
-        return tags.create_view(self.name + "_tags", replace=replace)
+        tags = self._con.from_df(tags)
+        tags.to_table(f'"{self.name}"."tags"')
+        return self._con.table(f'"{self.name}"."tags"')
     
-    def _parse_carriers(self, model, replace: bool) -> duckdb.DuckDBPyRelation:
+    def _parse_carriers(self, model) -> duckdb.DuckDBPyRelation:
         """
         Parse carriers from the model and create a DuckDB view for them. Each carrier is associated with its components.
         The view will be named `<entry_name>_carriers`. If `replace` is True, it will replace any existing view with the
@@ -451,8 +491,9 @@ class RDBEntry:
                 pass
 
         carriers = pd.DataFrame.from_records(carriers, columns=["component", "direction", "carrier"])
-        carriers = duckdb.from_df(carriers)
-        return carriers.create_view(self.name + "_carriers", replace=replace)
+        carriers = self._con.from_df(carriers)
+        carriers.to_table(f'"{self.name}"."carriers"')
+        return self._con.table(f'"{self.name}"."carriers"')
 
 
 # rdb = RDB(replace_entries=True)
