@@ -121,6 +121,21 @@ class RDBEntryRelation:
         if (offset != 0) and (limit is None):
             raise ValueError("You cannot specify an offset without a limit; please specify both or neither.")
         
+        # Add positional arguments as QoL way to include filters.
+        if len(args) > 0:
+            for arg in args:
+                if isinstance(arg, str):
+                    filters.append(arg)
+                elif isinstance(arg, tuple):  # TODO: improve typing to pandas namedtuple
+                    # This happens if a user directly passes a "itertuple" entry.
+                    for (k, v) in arg._asdict().items():
+                        if k in ["direction", "carrier", "node"]:
+                            # This come from querying.
+                            continue
+                        kwargs[k] = v
+                else:
+                    raise ValueError(f"Invalid argument type: {type(arg)}; positional arguments only allow for strings that describe a DuckDB relational filter expression.")
+        
         # Create filters based on mode selection.
         mode = None
         if "mode" not in rel.columns:
@@ -141,14 +156,6 @@ class RDBEntryRelation:
             else:
                 raise ValueError(f"Invalid mode: {mode}; must be one of [primal, dual, both, shadowprice].")
 
-        # Add positional arguments as QoL way to include filters.
-        if len(args) > 0:
-            for arg in args:
-                if isinstance(arg, str):
-                    filters.append(arg)
-                else:
-                    raise ValueError(f"Invalid argument type: {type(arg)}; positional arguments only allow for strings that describe a DuckDB relational filter expression.")
-        
         # Create filters based on singular or plural selectors on the columns.
         selectors = ["snapshot", "component", "fieldtype", "field"]
         for selector in selectors:
@@ -358,17 +365,26 @@ class RDBEntryQuery:
         else:
             raise ValueError(f"Invalid relation: {relation}; must be on of [tag, carrier], or the plural form of one of those.")
         
-        self._relation = self._relation.filter(filter).project("component").distinct()
+        self._relation = self._relation.filter(filter).distinct()
 
     def __repr__(self):
         return self._relation.__repr__()
     
     def __str__(self):
         return self._relation.__str__()
+    
+    def __iter__(self):
+        """Iterate over the entries in the relation, using named tuples."""
+        for el in self.to_df().itertuples(index=False):
+            yield el
 
     def fetch(self) -> list[str]:
         """Fetch data as `list`."""
-        return [el[0] for el in self._relation.fetchall()]
+        return [el for el in self._relation.fetchall()]
+    
+    def to_df(self) -> pd.DataFrame:
+        """Fetch data as `pandas.DataFrame`."""
+        return self._relation.to_df()
 
     def duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
@@ -491,26 +507,26 @@ class RDBEntry:
 
             if ctype == "Connection":
                 carrier = component.carrier.name
-                carriers.append((cname, "in", carrier))
-                carriers.append((cname, "out", carrier))
+                carriers.append((cname, "in", carrier, component.node_from, "exp", "in"))
+                carriers.append((cname, "out", carrier, component.node_to, "exp", "out"))
             elif ctype == "Decision":
                 pass
             elif ctype == "Node":
-                carriers.append((cname, None, component.carrier.name))
+                carriers.append((cname, None, component.carrier.name, None, None))
             elif ctype == "Profile":
                 if component.node_from is not None:
-                    carriers.append((cname, "in", component.carrier.name))
+                    carriers.append((cname, "in", component.carrier.name, component.node_from, "exp", "value"))
                 elif component.node_to is not None:
-                    carriers.append((cname, "out", component.carrier.name))
+                    carriers.append((cname, "out", component.carrier.name, component.node_to, "exp", "value"))
             elif ctype == "Unit":
                 for carrier in component.inputs.keys():
-                    carriers.append((cname, "in", carrier.name))       
+                    carriers.append((cname, "in", carrier.name, component.inputs[carrier], "exp", f"in_{carrier.name}"))
                 for carrier in component.outputs.keys():
-                    carriers.append((cname, "out", carrier.name))
+                    carriers.append((cname, "out", carrier.name, component.outputs[carrier], "exp", f"out_{carrier.name}"))
             elif ctype == "Virtual":
                 pass
 
-        carriers = pd.DataFrame.from_records(carriers, columns=["component", "direction", "carrier"])
+        carriers = pd.DataFrame.from_records(carriers, columns=["component", "direction", "carrier", "node", "fieldtype", "field"])
         carriers = self._con.from_df(carriers)
         carriers.to_table(f'"{self.name}"."carriers"')
         return self._con.table(f'"{self.name}"."carriers"')
