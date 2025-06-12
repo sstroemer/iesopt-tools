@@ -78,8 +78,11 @@ class Trace:
     
     def _get_plotly(self, x, y):
         import plotly.graph_objects as go
+
+        x = list(range(1, 1 + len(x)))
+
         if self._type == "bar":
-            return go.Bar(x=x, y=y, name=self._name)
+            return go.Bar(x=x, y=y, name=self._name, marker_color=self._kwargs.get("color", None))
         elif self._type.startswith("line"):
             mode = "lines"
             line_shape = "linear"
@@ -166,6 +169,7 @@ class Figure:
         """
         if self._backend == "plotly":
             import plotly.graph_objects as go
+            import plotly.io as pio
 
             # TODO:
             # Check if this is a single-entry figure or a entry-comparison figure.
@@ -173,6 +177,12 @@ class Figure:
             # x = [entry.name for entry in entries]
             # if len(set(x)) == 1:
             #     x = entries[0].snapshots
+
+            # Add colors to traces, so that they are consistent across figures even if re-ordered.
+            colorway = pio.templates[self._style if self._style else "plotly"].layout.colorway
+            for (i, trace) in enumerate(self._traces):
+                if "color" not in trace._kwargs:
+                    trace._kwargs["color"] = colorway[i % len(colorway)]
 
             x = self._traces[0]._data.index
             if xslice is not None:
