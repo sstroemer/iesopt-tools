@@ -7,6 +7,7 @@ class RDB:
     """
     A class to manage a result database (RDB) of entries, each representing a model result.
     """
+
     def __init__(self, name: str | None = None, replace_entries: bool = False):
         self._entries = dict()
         self._replace_entries = replace_entries
@@ -17,12 +18,12 @@ class RDB:
         if name not in self._entries:
             raise KeyError(f"RDBEntry '{name}' does not exist.")
         return self._entries[name]
-    
+
     @property
     def entries(self) -> list[str]:
         """Get a list of all entry names."""
         return sorted(self._entries.keys())
-    
+
     @property
     def con(self) -> duckdb.DuckDBPyConnection:
         """Get the underlying DuckDB connection."""
@@ -38,12 +39,14 @@ class RDB:
             name = f"{name['model']} ({name['scenario']})"
 
         if (name in self._entries) and (not self._replace_entries):
-            raise ValueError(f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries.")
-        
+            raise ValueError(
+                f"RDBEntry '{name}' already exists. Use `replace_entries=True` to allow overwriting existing entries."
+            )
+
         entry = RDBEntry(self, model, name, replace=self._replace_entries)
         self._entries[name] = entry
         return entry
-    
+
     def ui(self, start: bool = True, port: int | None = None) -> None:
         """
         Start the DuckDB UI for the RDB connection. If `port` is not specified, it will use the default port.
@@ -62,13 +65,14 @@ class RDBEntryRelation:
     A class to represent a relation in the result database (RDB).
     It provides methods to select, explore, and evaluate data from the relation.
     """
+
     def __init__(self, parent, relation):
         self._parent = parent
         self._relation = relation
-    
+
     def __repr__(self):
         return self._relation.__repr__()
-    
+
     def __str__(self):
         return self._relation.__str__()
 
@@ -79,7 +83,7 @@ class RDBEntryRelation:
     def to_duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
-    
+
     def to_table(self, name: str, replace: bool = False) -> None:
         """
         Create a DuckDB table for the relation with the specified name. The table will be created in the schema of the
@@ -97,15 +101,15 @@ class RDBEntryRelation:
         """
         name = f'"{self._parent.name}"."usertable_{name}"'
         if replace:
-            self._con.sql(f'DROP TABLE IF EXISTS {self.name} CASCADE;')
-        self._relation.to_table(name)       
+            self._con.sql(f"DROP TABLE IF EXISTS {self.name} CASCADE;")
+        self._relation.to_table(name)
 
     @property
     def entry(self) -> "RDBEntry":
         """Get the parent entry of this relation."""
         return self._parent
-    
-    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs) -> "RDBEntryRelation":
+
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug=False, **kwargs) -> "RDBEntryRelation":
         """
         Select data from the relation based on the provided arguments. This method allows for filtering by `snapshot`,
         `component`, `fieldtype`, `field`, or `mode`. The `mode` can be one of `primal`, `dual`, `both`, or
@@ -120,7 +124,7 @@ class RDBEntryRelation:
         # Check limit and offset.
         if (offset != 0) and (limit is None):
             raise ValueError("You cannot specify an offset without a limit; please specify both or neither.")
-        
+
         # Add positional arguments as QoL way to include filters.
         if len(args) > 0:
             for arg in args:
@@ -128,14 +132,16 @@ class RDBEntryRelation:
                     filters.append(arg)
                 elif isinstance(arg, tuple):  # TODO: improve typing to pandas namedtuple
                     # This happens if a user directly passes a "itertuple" entry.
-                    for (k, v) in arg._asdict().items():
+                    for k, v in arg._asdict().items():
                         if k in ["direction", "carrier", "node"]:
                             # This come from querying.
                             continue
                         kwargs[k] = v
                 else:
-                    raise ValueError(f"Invalid argument type: {type(arg)}; positional arguments only allow for strings that describe a DuckDB relational filter expression.")
-        
+                    raise ValueError(
+                        f"Invalid argument type: {type(arg)}; positional arguments only allow for strings that describe a DuckDB relational filter expression."
+                    )
+
         # Create filters based on mode selection.
         mode = None
         if "mode" not in rel.columns:
@@ -152,7 +158,9 @@ class RDBEntryRelation:
             elif mode == "shadowprice":
                 # This filters for dual results only, then for either "var.value" (Decision) or "con.nodalbalance" (Node).
                 filters.append("mode = 'dual'")
-                filters.append("(fieldtype = 'var' AND field = 'value') OR (fieldtype = 'con' AND field = 'nodalbalance')")
+                filters.append(
+                    "(fieldtype = 'var' AND field = 'value') OR (fieldtype = 'con' AND field = 'nodalbalance')"
+                )
             else:
                 raise ValueError(f"Invalid mode: {mode}; must be one of [primal, dual, both, shadowprice].")
 
@@ -164,13 +172,15 @@ class RDBEntryRelation:
 
             if (sel_sg in kwargs) and (sel_pl in kwargs):
                 raise ValueError(f"You cannot specify both '{sel_sg}' and '{sel_pl}' at the same time.")
-            
+
             if sel_sg in kwargs:
                 val = kwargs.pop(sel_sg)
                 if not isinstance(val, str):
-                    raise ValueError(f"The `{sel_sg}` argument must be a string; if you are trying to filter based on multiple options, pass `{sel_pl} = ...` instead.")
+                    raise ValueError(
+                        f"The `{sel_sg}` argument must be a string; if you are trying to filter based on multiple options, pass `{sel_pl} = ...` instead."
+                    )
                 filters.append(f"{sel_sg} = '{val}'")
-            
+
             if sel_pl in kwargs:
                 vals = kwargs.pop(sel_pl)
                 if isinstance(vals, RDBEntryQuery):
@@ -179,11 +189,11 @@ class RDBEntryRelation:
                     raise ValueError(f"The `{sel_pl}` argument must be a list or tuple of strings.")
                 vals = "', '".join(vals)
                 filters.append(f"{sel_sg} IN ('{vals}')")
-        
+
         # Check for unexpected keyword arguments.
         if len(kwargs) != 0:
             raise ValueError(f"Unexpected keyword arguments: {', '.join(kwargs.keys())}")
-        
+
         if debug:
             cnt = 0
             print(f"STEP {cnt:03d}: starting to apply filters on initial data:")
@@ -193,10 +203,10 @@ class RDBEntryRelation:
         # Apply filters to the relation.
         for filter in filters:
             if debug:
-                print(f"STEP {cnt:03d}: trying to apply filter \"{filter}\"")
+                print(f'STEP {cnt:03d}: trying to apply filter "{filter}"')
             try:
                 rel = rel.filter(filter)
-                
+
                 if debug:
                     print(f"STEP {cnt:03d}: filter applied successfully, current selection:")
                     print(rel)
@@ -213,22 +223,22 @@ class RDBEntryRelation:
                     f"    Message:   {msg}\n\n"
                     f"--------------------------------------------------------------------------"
                 ) from None
-        
+
         # Check for columns to keep:
         # Project the relation to the relevant columns -- only keep mode when it can contain both primal and dual results.
         columns = ["snapshot", "component", "fieldtype", "field", "value"] + (["mode"] if mode == "both" else [])
         columns = [c for c in columns if c in rel.columns]
         columns = ", ".join(columns)
-        
+
         # Project onto the selected columns.
         rel = rel.project(columns)
-        
+
         # Apply limit and offset if requested.
         # NOTE: This requires sorting, otherwise the results might not be deterministic, which takes time.
         if limit is not None:
             # Apply limit and offset.
             rel = rel.order(columns).limit(limit, offset)
-        
+
         return RDBEntryRelation(self._parent, rel)
 
     def explore(self, *args, order: bool = True, **kwargs) -> "RDBEntryRelation":
@@ -237,7 +247,7 @@ class RDBEntryRelation:
         for exploring the dimensions of the relation, such as `snapshot`, `component`, `fieldtype`, `field`, and `mode`.
         The `order` parameter determines whether the results should be ordered by the projected columns.
         The method can be called with positional arguments (e.g., `explore("fields")`) or keyword arguments (e.g.,
-        `explore(fields=True)`).        
+        `explore(fields=True)`).
         """
         rel = self._relation
 
@@ -249,10 +259,10 @@ class RDBEntryRelation:
             for key in ["snapshot", "component", "fieldtype", "field", "value", "mode"]:
                 has_sg = key in kwargs
                 has_pl = (key + "s") in kwargs
-                
+
                 if has_sg and has_pl:
                     raise ValueError(f"You cannot specify both '{key}' and '{key}s' at the same time.")
-                
+
                 if has_sg or has_pl:
                     projections.append(kwargs.pop(key if has_sg else key + "s"))
         elif len(args) == 1:
@@ -262,35 +272,43 @@ class RDBEntryRelation:
             if len(kwargs) > 0:
                 raise ValueError(
                     "You cannot specify both positional arguments and keyword arguments at the same time. "
-                    "This most likely means that you tried using something like `explore(\"fields\", modes=True)`. "
+                    'This most likely means that you tried using something like `explore("fields", modes=True)`. '
                     "Instead, either use `explore(\"fields\")` to only explore the 'fields' column, use "
                     "`explore(modes=True)` to only explore the 'modes' column, or use either "
-                    "`explore(fields=True, modes=True)` or `explore([\"modes\", \"fields\"])` to explore distinct "
+                    '`explore(fields=True, modes=True)` or `explore(["modes", "fields"])` to explore distinct '
                     "combinations both columns at the same time."
                 )
 
             if isinstance(arg, str):
                 arg = arg[:-1] if arg.endswith("s") else arg
                 if arg not in ["snapshot", "component", "fieldtype", "field", "mode"]:
-                    raise ValueError(f"Invalid argument: {arg}; must be one of ['snapshots', 'components', 'fieldtypes', 'fields', 'modes'], or the singular form of one of those.")
+                    raise ValueError(
+                        f"Invalid argument: {arg}; must be one of ['snapshots', 'components', 'fieldtypes', 'fields', 'modes'], or the singular form of one of those."
+                    )
                 projections.append(arg)
             elif isinstance(arg, list):
                 arg = [a[:-1] if a.endswith("s") else a for a in arg]
                 for a in arg:
                     if a not in ["snapshot", "component", "fieldtype", "field", "mode"]:
-                        raise ValueError(f"Cannot explore unknown dimension/column '{a}'; valid ones are ['snapshots', 'components', 'fieldtypes', 'fields', 'modes'], or their singular forms.")
+                        raise ValueError(
+                            f"Cannot explore unknown dimension/column '{a}'; valid ones are ['snapshots', 'components', 'fieldtypes', 'fields', 'modes'], or their singular forms."
+                        )
                 projections.extend(arg)
             else:
-                raise ValueError(f"Invalid argument type: {type(arg)}; positional arguments only allow for a single string that describes a column name to explore.")
+                raise ValueError(
+                    f"Invalid argument type: {type(arg)}; positional arguments only allow for a single string that describes a column name to explore."
+                )
         else:
-            raise ValueError("The `explore()` function excepts either positional arguments or keyword arguments, but not both at the same time.")
-        
+            raise ValueError(
+                "The `explore()` function excepts either positional arguments or keyword arguments, but not both at the same time."
+            )
+
         if "value" in projections:
             raise ValueError("You cannot explore the 'value' column; it is not a dimension but a result value.")
-        
+
         if len(kwargs) > 0:
             raise ValueError(f"Unexpected keyword arguments: {', '.join(kwargs.keys())}")
-        
+
         # Enforce a certain order of projections.
         if len(projections) > 0:
             projections = [p for p in ["snapshot", "component", "fieldtype", "field", "mode"] if p in projections]
@@ -334,17 +352,20 @@ class RDBEntryRelation:
         if by:
             aggr.extend(by if isinstance(by, list) else [by])
             group.extend(by if isinstance(by, list) else [by])
-        
+
         for fi in f:
             if "(" in fi:
                 if not fi.endswith(")"):
-                    raise ValueError(f"Invalid aggregation function '{fi}'; when supplying arguments, make sure they are give like `quantile(0.9)`.")
+                    raise ValueError(
+                        f"Invalid aggregation function '{fi}'; when supplying arguments, make sure they are give like `quantile(0.9)`."
+                    )
                 fi, fiargs = fi[:-1].split("(")
                 aggr.append(f"{fi}(value, {fiargs}) AS '{fi}({fiargs})'")
             else:
                 aggr.append(f"{fi}(value) AS {fi}")
 
         return RDBEntryRelation(self._parent, self._relation.aggregate(", ".join(aggr), ", ".join(group)))
+
 
 class RDBEntryQuery:
     """
@@ -353,9 +374,10 @@ class RDBEntryQuery:
     The relation can be used to fetch the components as a list or to perform further operations.
     The relation can be either `tag` or `carrier`, and the filter can be a string to filter the components.
     """
+
     def __init__(self, entry, relation: str, filter: str = "*"):
         self._entry = entry
-        
+
         if relation.startswith("tag"):
             self._relation = entry.tags.to_duckdb()
         elif relation.startswith("carrier"):
@@ -363,16 +385,18 @@ class RDBEntryQuery:
         elif relation == "__none__":
             return
         else:
-            raise ValueError(f"Invalid relation: {relation}; must be on of [tag, carrier], or the plural form of one of those.")
-        
+            raise ValueError(
+                f"Invalid relation: {relation}; must be on of [tag, carrier], or the plural form of one of those."
+            )
+
         self._relation = self._relation.filter(filter).distinct()
 
     def __repr__(self):
         return self._relation.__repr__()
-    
+
     def __str__(self):
         return self._relation.__str__()
-    
+
     def __iter__(self):
         """Iterate over the entries in the relation, using named tuples."""
         for el in self.to_df().itertuples(index=False):
@@ -381,7 +405,7 @@ class RDBEntryQuery:
     def fetch(self) -> list[str]:
         """Fetch data as `list`."""
         return [el for el in self._relation.fetchall()]
-    
+
     def to_df(self) -> pd.DataFrame:
         """Fetch data as `pandas.DataFrame`."""
         return self._relation.to_df().sort_values(by=["component", "carrier", "direction", "node"])
@@ -389,7 +413,7 @@ class RDBEntryQuery:
     def duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
-    
+
     def union(self, relation: str, filter: str = "*") -> "RDBEntryQuery":
         """
         Union this query with another query based on the specified relation and filter.
@@ -412,16 +436,18 @@ class RDBEntryQuery:
         new._relation = self._relation.intersect(other.to_duckdb())
         return new
 
+
 class RDBEntry:
     """
     A class representing a single entry in the result database (RDB).
     It contains the model results and provides methods to explore and query the data.
     """
-    def __init__(self, rdb, model, name: str, replace: bool = False):     
+
+    def __init__(self, rdb, model, name: str, replace: bool = False):
         self._rdb = rdb
         self._con = self._rdb.con
         self.name = name
-        
+
         # Create a DuckDB schema for the entry.
         if replace:
             self._con.sql(f'DROP SCHEMA IF EXISTS "{self.name}" CASCADE;')
@@ -432,7 +458,7 @@ class RDBEntry:
         self.carriers = RDBEntryRelation(self, self._parse_carriers(model))
         self.results = RDBEntryRelation(self, self._parse_results(model))
         self._parse_model(model)
-        
+
         # Manually keep snapshots (in correct order).
         self.snapshots = model.internal.model.snapshots
         self.snapshots = [self.snapshots[t].name for t in range(1, len(self.snapshots) + 1)]
@@ -455,7 +481,7 @@ class RDBEntry:
         """
         return RDBEntryQuery(self, relation, filter)
 
-    def select(self, *args, limit: int | None = None, offset: int = 0, debug = False, **kwargs) -> RDBEntryRelation:
+    def select(self, *args, limit: int | None = None, offset: int = 0, debug=False, **kwargs) -> RDBEntryRelation:
         """
         Select data from the entry based on the provided arguments.
         This method allows for filtering by `snapshot`, `component`, `fieldtype`, `field`, or `mode`.
@@ -484,7 +510,7 @@ class RDBEntry:
         same name.
         """
         tags = []
-        for (tag, components) in model.internal.model.tags.items():
+        for tag, components in model.internal.model.tags.items():
             for component in components:
                 tags.append((component, tag))
 
@@ -492,7 +518,7 @@ class RDBEntry:
         tags = self._con.from_df(tags)
         tags.to_table(f'"{self.name}"."tags"')
         return self._con.table(f'"{self.name}"."tags"')
-    
+
     def _parse_carriers(self, model) -> duckdb.DuckDBPyRelation:
         """
         Parse carriers from the model and create a DuckDB view for them. Each carrier is associated with its components.
@@ -522,11 +548,15 @@ class RDBEntry:
                 for carrier in component.inputs.keys():
                     carriers.append((cname, "in", carrier.name, component.inputs[carrier], "exp", f"in_{carrier.name}"))
                 for carrier in component.outputs.keys():
-                    carriers.append((cname, "out", carrier.name, component.outputs[carrier], "exp", f"out_{carrier.name}"))
+                    carriers.append(
+                        (cname, "out", carrier.name, component.outputs[carrier], "exp", f"out_{carrier.name}")
+                    )
             elif ctype == "Virtual":
                 pass
 
-        carriers = pd.DataFrame.from_records(carriers, columns=["component", "direction", "carrier", "node", "fieldtype", "field"])
+        carriers = pd.DataFrame.from_records(
+            carriers, columns=["component", "direction", "carrier", "node", "fieldtype", "field"]
+        )
         carriers = self._con.from_df(carriers)
         carriers.to_table(f'"{self.name}"."carriers"')
         return self._con.table(f'"{self.name}"."carriers"')
