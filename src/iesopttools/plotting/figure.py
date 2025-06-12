@@ -174,6 +174,10 @@ class Figure:
             # if len(set(x)) == 1:
             #     x = entries[0].snapshots
 
+            x = self._traces[0]._data.index
+            if xslice is not None:
+                x = x[xslice[0]:xslice[1]]
+
             if self._kwargs.get("barmode", None) in ["stack", "relative"]:
                 # Get all traces that are (not) bars.
                 bt = [t for t in self._traces if t._type == "bar"]
@@ -182,17 +186,13 @@ class Figure:
                 # Keep traces with low volatility close to the x-axis.
                 bt.sort(
                     key=lambda t: (
-                        t._data["value"].var() / max(t._data["value"].abs().mean(), 1e-6),
-                        t._data["value"].abs().max()
+                        t._data.loc[x, "value"].std() / max(t._data.loc[x, "value"].abs().mean(), 1e-6),
+                        t._data.loc[x, "value"].abs().mean()
                     )
                 )
 
                 # Add the bar traces first, then the non-bar traces.
                 self._traces = bt + nt
-
-            x = self._traces[0]._data.index
-            if xslice is not None:
-                x = x[xslice[0]:xslice[1]]
 
             self._fig = go.Figure(data=[trace.get(x, backend=self._backend) for trace in self._traces])
 
