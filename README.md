@@ -37,3 +37,37 @@ fig.add(Trace("line+markers+hv", entry.select(component="h2_north", mode="shadow
 fig.add(Trace("bar", entry.select(component="h2_south", mode="shadowprice"), name="South", sign=-1.0))
 fig.show()
 ```
+
+#### Slicing figures on render
+
+```python
+fig.show(xslice=(0, 168))
+```
+
+#### Aggrgated values
+
+```python
+for asset in assets:
+    fig.add(Trace("bar", entry.select(asset), aggregate_into=52))
+```
+
+#### Skipping traces
+
+Empty traces are those that are `0` for all time steps, which can be skipped in the figure:
+
+```python
+fig = Figure(..., skip_empty=True)
+```
+
+### Querying injection/node
+
+```python
+assets = entry.query("carrier", "carrier = 'heat' AND direction = 'out' AND node IN ('grid_heat', 'grid_sim')")
+```
+
+Then also directly adding these elements as traces to a figure:
+
+```python
+for asset in assets:
+    fig.add(Trace("bar", entry.select(asset)))
+```
