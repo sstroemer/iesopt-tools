@@ -410,7 +410,7 @@ class RDBEntryQuery:
         """Fetch data as `pandas.DataFrame`."""
         return self._relation.to_df().sort_values(by=["component", "carrier", "direction", "node"])
 
-    def duckdb(self) -> duckdb.DuckDBPyRelation:
+    def to_duckdb(self) -> duckdb.DuckDBPyRelation:
         """Return the underlying `duckdb.DuckDBPyRelation`."""
         return self._relation
 
