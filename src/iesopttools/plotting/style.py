@@ -43,13 +43,13 @@ def _setup_plotly_template_foo():
             ],
             hovermode="x unified",
         ),
-        data=dict(
-            bar=[
-                go.Bar(
-                    texttemplate="%{value:$.2s}",
-                    textposition="outside",
-                    textfont=dict(family="Helvetica Neue, Helvetica, Sans-serif", size=20, color="#FFFFFF"),
-                )
-            ]
-        ),
+        # data=dict(
+        #     bar=[
+        #         go.Bar(
+        #             texttemplate="%{value:$.2s}",
+        #             textposition="outside",
+        #             textfont=dict(family="Helvetica Neue, Helvetica, Sans-serif", size=20, color="#FFFFFF"),
+        #         )
+        #     ]
+        # ),
     )
