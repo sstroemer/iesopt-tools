@@ -75,7 +75,7 @@ class RDBEntryRelation:
 
     def __str__(self):
         return self._relation.__str__()
-    
+
     def __iter__(self):
         """Iterate over the entries in the relation, using named tuples."""
         for el in self.to_df().itertuples(index=False):
