@@ -37,6 +37,9 @@ entry = rdb.add_entry(model)
 drawio.write_entry(entry, filename="opt/out/sketch.drawio")
 ```
 
+This can be opened directly in VSCode using the
+[Draw.io Integration](https://marketplace.visualstudio.com/items?itemName=hediet.vscode-drawio) extension.
+
 ### Plotting
 
 ```python
