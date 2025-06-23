@@ -1,22 +1,45 @@
-import drawpyo
 import iesopt
 from iesopttools import RDB
-ex = iesopt.examples()
-cfg = iesopt.make_example(ex[16], dst_dir="opt")
+from iesopttools.diagrams import drawio
+
+
+cfg = iesopt.make_example(iesopt.examples()[5], dst_dir="opt")
 model = iesopt.run(cfg)
+
 rdb = RDB()
-entry = rdb.add_entry(model, "foo")
+entry = rdb.add_entry(model)
+
+drawio.write_entry(entry, filename="opt/out/sketch.drawio")
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 COLORS = {
     "electricity": "#4c00ff",
     "heat": "#7a1800",
+    "hydrogen": "#00a2ff",
+    "co2": "#666666",
+    "gas": "#3a2f00",
 }
+COLORS["h2"] = COLORS["hydrogen"]
+COLORS["ch4"] = COLORS["gas"]
 
 class Sheet:
     def __init__(self, file, name="sheet_1"):
         self.page = drawpyo.Page(file, name=name)
         self.objects = dict()
+        self.graph = Graph()
     
     def add_object(self, core_component):
         if core_component.obj.value in self.objects:
@@ -33,6 +56,13 @@ class CoreComponent:
             raise TypeError("sheet must be an instance of Sheet")
         sheet.add_object(self)
         self.obj.page = sheet.page
+        
+        cctype = self.__class__.__name__
+        if cctype in ["Node", "Profile", "Unit"]:
+            sheet.graph.add_vertex(self.obj.value, cctype)
+        elif cctype == "Connection":
+            sheet.graph.add_edge(self.source, self.target)
+        
         return self
 
 class Profile(CoreComponent):
@@ -68,6 +98,8 @@ class Unit(CoreComponent):
 class Connection(CoreComponent):
     def __init__(self, source, target, name):
         super().__init__()
+        self.source = source.obj.value
+        self.target = target.obj.value
         self.obj = drawpyo.diagram.Edge(
             source=source.obj,
             target=target.obj,
@@ -78,7 +110,7 @@ class Connection(CoreComponent):
             jumpStyle="gap",
             strokeColor=source.obj.strokeColor,
         )
-        self.obj._add_and_set_style_attrib("strokeWidth", 1.5)  # TODO: does not work
+        self.obj._add_and_set_style_attrib("strokeWidth", 2.0)  # TODO: does not work
 
 def connect(source, target, animate=False):
     entryX = exitX = entryY = exitY = None
@@ -113,6 +145,8 @@ def connect(source, target, animate=False):
         strokeColor=strokeColor,
     )
 
+from .layout import *
+
 diagram = drawpyo.File()
 sheet = Sheet(diagram)
 
@@ -120,6 +154,7 @@ for row in entry.explore("components"):
     tags = entry.query("tags", f"component = '{row.component}'").to_df()["tag"].tolist()
     if len(tags) > 1:
         print(f"Multiple tags (currently not supported) found for component {row.component}: {tags}; ignoring all except the first one.")
+        tags = [t for t in tags if t in ["Profile", "Node", "Unit", "Connection", "Decision"]]
     tag = tags[0]
 
     carriers = entry.query("carriers", f"component = '{row.component}'").to_df()
@@ -129,15 +164,52 @@ for row in entry.explore("components"):
         Profile(carriers["carrier"].iloc[0], name=row.component).add_to(sheet)
     elif tag == "Node":
         assert len(carriers) == 1
-        Node(carriers["carrier"].iloc[0], name=row.component).add_to(sheet)   # TODO: has_state
+        # TODO: Simplify that check
+        has_state = bool(len(entry.select(component=row.component, field="state").to_duckdb()))
+        Node(carriers["carrier"].iloc[0], name=row.component, has_state=has_state).add_to(sheet)
     elif tag == "Unit":
         Unit(name=row.component).add_to(sheet)
     elif tag == "Connection":
-        print(f"Skipping {row.component} as it is a Connection.")
         continue
     else:
-        print(f"Unknown tag {tag} for component {row.component}; skipping.")
+        # TODO: Handle virtuals here.
         continue
+
+edges = entry.query("carriers", "direction IS NOT NULL")
+connections = entry.query("tags", "tag = 'Connection'").to_df()["component"].tolist()
+
+for row in edges:
+    if (row.component in connections):
+        if row.direction == "out":
+            continue
+
+        df = edges.to_duckdb().filter(f"component = '{row.component}'").to_df()
+        df.set_index("direction", inplace=True)
+        Connection(
+            source=sheet.objects[df.loc["in", "node"]],
+            target=sheet.objects[df.loc["out", "node"]],
+            name=row.component,
+        ).add_to(sheet)
+    elif row.direction == "out":
+        connect(sheet.objects[row.component], sheet.objects[row.node])
+        sheet.graph.add_edge(row.component, row.node)
+    elif row.direction == "in":
+        connect(sheet.objects[row.node], sheet.objects[row.component])
+        sheet.graph.add_edge(row.node, row.component)
+
+layout = sheet.graph.layout()
+for (k, v) in layout.items():
+    sheet.objects[k].obj.position = v
+
+diagram.write(file_path = "./", file_name = "test.drawio")
+
+
+
+
+
+
+
+
 
 
 # profiles = [Profile("electricity", name=f"profile_{i}", page=page) for i in range(1, 5)]
@@ -197,4 +269,4 @@ for row in entry.explore("components"):
 # from Units
 # line_end_source="oval"
 
-diagram.write(file_path = "./", file_name = "test.drawio")
+# diagram.write(file_path = "./", file_name = "test.drawio")
