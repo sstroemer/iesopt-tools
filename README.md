@@ -20,6 +20,23 @@ entry = rdb.add_entry(model)
 entry.select(components=["node1", "node2"], mode="shadowprice").to_table("prices")
 ```
 
+### Converting to diagram/sketch
+
+```python
+import iesopt
+from iesopttools import RDB
+from iesopttools.diagrams import drawio
+
+
+cfg = iesopt.make_example(iesopt.examples()[5], dst_dir="opt")
+model = iesopt.run(cfg)
+
+rdb = RDB()
+entry = rdb.add_entry(model)
+
+drawio.write_entry(entry, filename="opt/out/sketch.drawio")
+```
+
 ### Plotting
 
 ```python
