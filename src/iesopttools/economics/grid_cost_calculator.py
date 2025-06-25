@@ -46,5 +46,5 @@ def calculate_grid_costs(dso: str, grid_level: int, *, grid_feedin_rated_power_l
 
 
 if __name__ == '__main__':
-    output = calculate_grid_costs(dso="Netz_NOe", grid_level=5, grid_feedin_rated_power_leq5MW=True, year=2025)
+    output = calculate_grid_costs(dso="Wiener_Netze", grid_level=5, grid_feedin_rated_power_leq5MW=True, year=2025)
     print(output.to_csv(index=False))
