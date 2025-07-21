@@ -18,6 +18,10 @@ def write_entry(entry, filename: str):
                 f"ignoring all except the first one."
             )
             tags = [t for t in tags if t in ["Profile", "Node", "Unit", "Connection", "Decision"]]
+        
+        if len(tags) == 0:
+            continue
+        
         tag = tags[0]
 
         carriers = entry.query("carriers", f"component = '{row.component}'").to_df()
