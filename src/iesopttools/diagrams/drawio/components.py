@@ -74,4 +74,4 @@ class Connection(CoreComponent):
             jumpStyle="gap",
             strokeColor=source.obj.strokeColor,
         )
-        self.obj._add_and_set_style_attrib("strokeWidth", 2.0)  # TODO: "1.5" does not work
+        self.obj._add_and_set_style_attrib("strokeWidth", 3.0)  # TODO: "1.5" does not work
